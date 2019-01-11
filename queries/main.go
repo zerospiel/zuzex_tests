@@ -24,6 +24,7 @@ const (
 	layout               = "01/02/2006"
 	saleDateTitle        = "Sale Date"
 	propertyAddressTitle = "Property Address"
+	parcelNumberTitle    = "Parcel Number"
 
 	resultsPerPage        = 100
 	entriesToFetchPerOnce = 20
@@ -131,10 +132,14 @@ func getActiveIDs(body string) (activeIDs []string) {
 	return
 }
 
-func processIDs(ids []string, header http.Header) (recs []string, err error) {
+func processIDs(ids []string, header http.Header) (recs [][]string, err error) {
 	var (
-		// mtx sync.Mutex
-		wg sync.WaitGroup
+		mtx               sync.Mutex
+		wg                sync.WaitGroup
+		saleDates         []string
+		propertyAddresses []string
+		parcelNumbers     []string
+		owners            []string
 	)
 
 	fmt.Printf("in processIDs with list %q and header %q\n", ids, header)
@@ -170,189 +175,234 @@ func processIDs(ids []string, header http.Header) (recs []string, err error) {
 				log.Printf("#%d: %d status code", idx, resp.StatusCode)
 			}
 
-			/****************************************************************/
-			// b, _ := ioutil.ReadAll(resp.Body)
-			// ioutil.WriteFile(id+".html", b, 0644)
-			/****************************************************************/
+			doc, err := goquery.NewDocumentFromResponse(resp)
+			if err != nil {
+				return
+			}
+
+			// folios
+			doc.Find("div.information-box > table").Each(func(i int, info *goquery.Selection) {
+				info.Find("tr").Each(func(i int, infoRaw *goquery.Selection) {
+					mtx.Lock()
+					parcelNumbers = append(parcelNumbers, strings.TrimSpace(infoRaw.Find("td.information-box-values.border-left > a#propertyAppraiserLink").Text()))
+					mtx.Unlock()
+				})
+			})
+
+			// sales and property
+			doc.Find("div#summarySummary.toggle-container > table.table.no-borders.toggle-container-content").Each(func(i int, summary *goquery.Selection) {
+				summary.Find("tr").Each(func(i int, summaryRaw *goquery.Selection) {
+					rowTitle := summaryRaw.Find("td.text-right").Text()
+					if rowTitle == saleDateTitle {
+						mtx.Lock()
+						saleDates = append(saleDates, strings.TrimSpace(summaryRaw.Children().Eq(1).Text()))
+						mtx.Unlock()
+					} else if rowTitle == propertyAddressTitle {
+						// this isn't needed by the Runner interface, it should be added while normalization process in Uploader when got in scraper Rabbit queue
+						rx := regexp.MustCompile(`^\(VACANT\sLOT\)\s`)
+						mtx.Lock()
+						propertyAddresses = append(propertyAddresses, rx.ReplaceAllString(strings.Replace(strings.TrimSpace(summaryRaw.Children().Eq(1).Text()), "\n", " ", -1), ""))
+						mtx.Unlock()
+					}
+				})
+			})
+
+			// owners
+			var cnt int
+			doc.Find("div#publicSection.row-spacer > div#summaryParties.table-div.box-shadow.row-spacer > div#associatedParties.toggle-container > table.table.toggle-container-content").Each(func(i int, parties *goquery.Selection) {
+				doc.Find("tr").Each(func(i int, partiesRaw *goquery.Selection) {
+					if partiesRaw.Find("td > div.muted").Text() == "OWNER" && cnt < 2 {
+						mtx.Lock()
+						owners = append(owners, strings.TrimSpace(partiesRaw.Find("td > strong").Text()))
+						mtx.Unlock()
+						cnt++
+					}
+				})
+			})
 
 			return
 		}(idx, id)
 	}
 
 	wg.Wait()
-
+	recs = append(recs, parcelNumbers, saleDates, propertyAddresses, owners)
 	return
 }
 
 func main() {
-	// h, _, err := getHeader()
+	h, p, err := getHeader()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	/***************** TEST AREA 1 PAGE *****************/
+	// params := url.Values{}
+	// params.Set("caseID", "37666")
+	// params.Set("openCaseList", "")
+	// params.Set("isPublic", "1")
+
+	// req, err := http.NewRequest(http.MethodPost, "https://miamidade.realtdm.com/public/cases/details", bytes.NewBufferString(params.Encode()))
+	// if err != nil {
+	// 	log.Fatal(err)
+	// }
+	// req.Header = *h
+
+	// client := &http.Client{}
+	// resp, err := client.Do(req)
 	// if err != nil {
 	// 	log.Fatal(err)
 	// }
 
-	res, err := http.Get(searchSite)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != 200 {
-		log.Fatalf("status code error: %d %s", res.StatusCode, res.Status)
-	}
+	// if resp == nil {
+	// 	log.Fatal("resp == nil")
+	// }
+	// defer resp.Body.Close()
 
-	cookie := res.Header.Get("Set-Cookie")
-	_ = cookie
-
-	header := &http.Header{
-		"Accept":                    []string{"text/html:application/xhtml+xml:application/xml;q=0.9:image/webp:image/apng:*/*;q=0.8"},
-		"Accept-Language":           []string{"en-US:en;q=0.9:ru;q=0.8"},
-		"Cache-Control":             []string{"no-cache"},
-		"Content-Type":              []string{"application/x-www-form-urlencoded"},
-		"Pragma":                    []string{"no-cache"},
-		"Upgrade-Insecure-Requests": []string{"1"},
-		"X-Compress":                []string{"null"},
-	}
-
-	params := url.Values{}
-	params.Set("caseID", "21908")
-	params.Set("openCaseList", "")
-	params.Set("isPublic", "1")
-
-	req, err := http.NewRequest(http.MethodPost, "https://miamidade.realtdm.com/public/cases/details", bytes.NewBufferString(params.Encode()))
-	if err != nil {
-		log.Fatal(err)
-	}
-	req.Header = *header
-
-	client := &http.Client{
-		Timeout: time.Minute * 1,
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	if resp == nil {
-		log.Fatal("resp == nil")
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode >= http.StatusBadRequest {
-		log.Fatal("400+ status code ", resp.StatusCode)
-	}
-
-	/****************************************************************/
-	// b, _ := ioutil.ReadAll(resp.Body)
-	// ioutil.WriteFile("realkek.html", b, 0644)
-	/****************************************************************/
-
-	doc, err := goquery.NewDocumentFromReader(resp.Body)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	var saleDates []string
-	var propertyAddresses []string
-	doc.Find("div#summarySummary.toggle-container > table.table.no-borders.toggle-container-content").Each(func(i int, summary *goquery.Selection) {
-		summary.Find("tr").Each(func(i int, summaryRaw *goquery.Selection) {
-			rowTitle := summaryRaw.Find("td.text-right").Text()
-			if rowTitle == saleDateTitle {
-				// TODO: replace newline, it doesn't work properly, idk why
-				saleDates = append(saleDates, strings.Replace(strings.TrimSpace(summaryRaw.Children().Eq(1).Text()), "\n", " ", -1))
-			} else if rowTitle == propertyAddressTitle {
-				propertyAddresses = append(propertyAddresses, strings.TrimSpace(summaryRaw.Children().Eq(1).Text()))
-			}
-		})
-	})
-
-	fmt.Println(saleDates)
-	fmt.Printf("%#v\n", propertyAddresses)
-
-	// result, err := getSearchResults(1, h, p)
-	// if err != nil {
-	// 	log.Fatal(err)
+	// if resp.StatusCode >= http.StatusBadRequest {
+	// 	log.Printf("#%d: %d status code", 1, resp.StatusCode)
 	// }
 
-	// // ioutil.WriteFile("test.html", []byte(result), 0644)
+	// /****************************************************************/
+	// // b, _ := ioutil.ReadAll(resp.Body)
+	// // ioutil.WriteFile(id+".html", b, 0644)
+	// /****************************************************************/
 
-	// doc, err := goquery.NewDocumentFromReader(strings.NewReader(result))
+	// doc, err := goquery.NewDocumentFromResponse(resp)
 	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// checkResults := doc.Find(noResultsSelector).Text()
-	// if checkResults == noCases {
-	// 	fmt.Println("OK NO RESULTS")
-	// 	return
-	// } else if checkResults == noFilter {
-	// 	fmt.Println("OK NO FILTER")
 	// 	return
 	// }
 
-	// pageInfo := doc.Find(pageSelector).Text()
-	// pageMatch := rxPageCount.FindStringSubmatch(pageInfo)
-	// if len(pageMatch) != 3 {
-	// 	log.Fatal("wrong page info")
-	// }
-
-	// pageCount, err := strconv.ParseInt(pageMatch[2], 10, 64)
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
-
-	// errCh := make(chan error, 1)
 	// var (
-	// 	mtx     sync.Mutex
-	// 	wg      sync.WaitGroup
-	// 	records []string
+	// 	saleDates         []string
+	// 	propertyAddresses []string
+	// 	parcelNumbers     []string
+	// 	owners            []string
 	// )
 
-	// _ = pageCount
-	// for page := 1; page <= int(1); page++ {
-	// 	wg.Add(1)
-	// 	go func(page int) {
-	// 		defer wg.Done()
+	// // folios
+	// doc.Find("div.information-box > table").Each(func(i int, info *goquery.Selection) {
+	// 	info.Find("tr").Each(func(i int, infoRaw *goquery.Selection) {
+	// 		parcelNumbers = append(parcelNumbers, strings.TrimSpace(infoRaw.Find("td.information-box-values.border-left > a#propertyAppraiserLink").Text()))
+	// 	})
+	// })
 
-	// 		body, err := getSearchResults(page, h, p)
-	// 		if err != nil {
-	// 			select {
-	// 			case errCh <- err:
-	// 			default:
-	// 			}
+	// // sales and property
+	// doc.Find("div#summarySummary.toggle-container > table.table.no-borders.toggle-container-content").Each(func(i int, summary *goquery.Selection) {
+	// 	summary.Find("tr").Each(func(i int, summaryRaw *goquery.Selection) {
+	// 		rowTitle := summaryRaw.Find("td.text-right").Text()
+	// 		if rowTitle == saleDateTitle {
+	// 			saleDates = append(saleDates, strings.TrimSpace(summaryRaw.Children().Eq(1).Text()))
+	// 		} else if rowTitle == propertyAddressTitle {
+	// 			// this isn't needed by the Runner interface, it should be added while normalization process in Uploader when got in scraper Rabbit queue
+	// 			rx := regexp.MustCompile(`^\(VACANT\sLOT\)\s`)
+	// 			propertyAddresses = append(propertyAddresses, rx.ReplaceAllString(strings.Replace(strings.TrimSpace(summaryRaw.Children().Eq(1).Text()), "\n", " ", -1), ""))
 	// 		}
+	// 	})
+	// })
 
-	// 		activeIDs := getActiveIDs(body)
-
-	// 		workersTimesToExec := (len(activeIDs) / entriesToFetchPerOnce) + 1
-	// 		for i := 0; i < workersTimesToExec; i++ {
-	// 			var currentList []string
-	// 			if len(activeIDs) > entriesToFetchPerOnce {
-	// 				currentList, activeIDs = activeIDs[:entriesToFetchPerOnce], activeIDs[entriesToFetchPerOnce:]
-	// 			} else {
-	// 				currentList = activeIDs
-	// 			}
-	// 			recs, err := processIDs(currentList, *h)
-	// 			if err != nil {
-	// 				select {
-	// 				case errCh <- err:
-	// 				default:
-	// 				}
-	// 			} else if len(recs) > 0 {
-	// 				mtx.Lock()
-	// 				records = append(records, recs...)
-	// 				mtx.Unlock()
-	// 			}
+	// // owners
+	// var cnt int
+	// doc.Find("div#publicSection.row-spacer > div#summaryParties.table-div.box-shadow.row-spacer > div#associatedParties.toggle-container > table.table.toggle-container-content").Each(func(i int, parties *goquery.Selection) {
+	// 	doc.Find("tr").Each(func(i int, partiesRaw *goquery.Selection) {
+	// 		if partiesRaw.Find("td > div.muted").Text() == "OWNER" && cnt < 2 {
+	// 			owners = append(owners, strings.TrimSpace(partiesRaw.Find("td > strong").Text()))
+	// 			cnt++
 	// 		}
-	// 	}(page)
-	// }
-	// wg.Wait()
+	// 	})
+	// })
 
-	// select {
-	// case err = <-errCh:
-	// default:
-	// }
+	// fmt.Println(parcelNumbers)
+	// fmt.Println(saleDates)
+	// fmt.Println(propertyAddresses)
+	// fmt.Println(owners)
+	/***************** TEST AREA 1 PAGE *****************/
 
-	// if err != nil {
-	// 	log.Fatal(err)
-	// }
+	result, err := getSearchResults(1, h, p)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// ioutil.WriteFile("test.html", []byte(result), 0644)
+
+	doc, err := goquery.NewDocumentFromReader(strings.NewReader(result))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	checkResults := doc.Find(noResultsSelector).Text()
+	if checkResults == noCases {
+		fmt.Println("OK NO RESULTS")
+		return
+	} else if checkResults == noFilter {
+		fmt.Println("OK NO FILTER")
+		return
+	}
+
+	pageInfo := doc.Find(pageSelector).Text()
+	pageMatch := rxPageCount.FindStringSubmatch(pageInfo)
+	if len(pageMatch) != 3 {
+		log.Fatal("wrong page info")
+	}
+
+	pageCount, err := strconv.ParseInt(pageMatch[2], 10, 64)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	errCh := make(chan error, 1)
+	var (
+		mtx     sync.Mutex
+		wg      sync.WaitGroup
+		records [][]string
+	)
+
+	for page := 1; page <= int(pageCount); page++ {
+		wg.Add(1)
+		go func(page int) {
+			defer wg.Done()
+
+			body, err := getSearchResults(page, h, p)
+			if err != nil {
+				select {
+				case errCh <- err:
+				default:
+				}
+			}
+
+			activeIDs := getActiveIDs(body)
+
+			workersTimesToExec := (len(activeIDs) / entriesToFetchPerOnce) + 1
+			for i := 0; i < workersTimesToExec; i++ {
+				var currentList []string
+				if len(activeIDs) > entriesToFetchPerOnce {
+					currentList, activeIDs = activeIDs[:entriesToFetchPerOnce], activeIDs[entriesToFetchPerOnce:]
+				} else {
+					currentList = activeIDs
+				}
+				recs, err := processIDs(currentList, *h)
+				if err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+				} else if len(recs) > 0 {
+					mtx.Lock()
+					records = append(records, recs...)
+					mtx.Unlock()
+				}
+			}
+		}(page)
+	}
+	wg.Wait()
+
+	select {
+	case err = <-errCh:
+	default:
+	}
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(records)
 	log.Println("EXIT")
 }
