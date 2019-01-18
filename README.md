@@ -1028,7 +1028,7 @@ $ docker ps
 - `Utils`
 - `Address`
 
-3. Для репозитория `APP` выполнить `make clean && make build`
+3. Для репозитория `APP` выполнить `yarn install && make clean && make build`
 4. Для всех остальных репозиториев выполнить `make build`
 5. Для всех репозиториев, кроме `API` и `APP` выполнить сбилдить бинарники (`go build`)
 
@@ -1037,6 +1037,8 @@ $ docker ps
 >**Проект собран**.
 
 ### Запуск сервисов и сервера
+
+> ***Важно***: предварительно заменить все вхождения `postgres://postgres:ffffae9c3196f20d7031d6df74a63ff3@stage.cpaulgroup.com:6432/snl?sslmode=disable` и `amqp://queue:d46d7f5dc52d9d0f6041b3f32a5d2151@stage.cpaulgroup.com:9969/queue` на свои собственные адреса.
 
 **Запуск сервера**:
 
@@ -1047,6 +1049,18 @@ $ make serve
 ```
 
 **Запуск сервисов** производится обычным запуском бинарника, при желании можно указать порт через ключ `--port`.
+
+### Как залогиниться на сервере
+
+Есть 2 способа залогиниться на сервере:
+
+1. Реализована `Google+` авторизация, так что можно «скормить» свой `Google` аккаунт.
+2. Руками через БД выполнить запрос:
+
+```sql
+INSERT INTO auth_user (password, last_login, is_superuser, username, first_name, last_name, email, is_staff, is_active, date_joined) VALUES ('pbkdf2_sha256$24000$BpLnfg$1+ONS7PE2vXWIdcF6ba+hKoiinyOluoeWKfLTY23gjs=', NULL, true, 'your_login', 'fn', 'ln', 'your_email_address', true, true, LOCALTIMESTAMP)
+-- пароль 'i am rahul' можно заменить после того, как залогиниться на сервер
+```
 
 <div id="dep-work"/>
 
