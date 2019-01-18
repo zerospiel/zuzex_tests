@@ -39,7 +39,7 @@
   - [Разбан сервера](#crawlera)
   - [Preimport as a Service](#preimport-aas)
   - [Normalizer as a Service](#normalizer-aas)
-  - [Включить PapperTrail](#paper-logger)
+  - [Включить PaperTrail](#paper-logger)
 - [Другие README](#other-readme)
 
 <div id="code-main"/>
@@ -111,7 +111,7 @@
 
 Для директорий `Client`, `Provider`, `Utils` имеются тесты, но они по большей части нерабочие, я их не правил, поэтому надо быть внимательным при работе с кодом, либо переписать тесты.
 
-***Сейчас почти все тесты существуют с вызовом `t.Skip()`!***
+>***Замечание***: *Сейчас почти все тесты существуют с вызовом `t.Skip()`!*
 
 ### Ключи API `Address`
 
@@ -136,7 +136,7 @@
 В этом репозитории почти нет особых деталей работы, миграции сидят на пакете [SQLMigrate]. Миграции работают в связке с пакетом [Go-Bindata], которому необходимо скормить все файлы `*.sql` из директории `migrations` и манифест `swagger`:
 
 ```sh
-$ $(GOPATH)/go-bindata -pkg pgtransp -o path_to_api/client/pgtransp/bindata.go path_to_api/fixed.yaml $(find path_to_api/client/pgtransp/migrations -type f -name "*.sql")
+$ go-bindata -pkg pgtransp -o path_to_api/client/pgtransp/bindata.go path_to_api/fixed.yaml $(find path_to_api/client/pgtransp/migrations -type f -name "*.sql")
 # отдаёт пакету манифест и все миграции
 # команду не следует запускать руками, она присутствует в Makefile
 ```
@@ -159,11 +159,11 @@ $ $(GOPATH)/go-bindata -pkg pgtransp -o path_to_api/client/pgtransp/bindata.go p
 ### Использование CLI `API`
 
 ```sh
-$ $(GOPATH)/api-cli init
+$ api-cli init
 # обычная инициализация по дефолту к БД с названием snl, не несёт полезной функции
-$ $(GOPATH)/api-cli migrate
+$ api-cli migrate
 # применяет миграции из директории `client/pgrtransp/migrations` по дефолту к БД с названием snl
-$ $(GOPATH)/api-cli migrate down
+$ api-cli migrate down
 # откатить миграции
 ```
 
@@ -424,6 +424,10 @@ $ app-server --host="localhost" --port 50000 --scheme http
 
 **Тесты в этом репозитории отсутствуют** (за исключением 1 файла с 1 функцией). Их следует написать самому.
 
+### Ключи API `APP`
+
+В этом репозитории используются ключи API как минимум одного сервиса, `Google+`, для `OAuth`-авторизации. Все настройки и ключи расположены в проекте `DADEBOTSDB` в аккаунте `mmorgoev@zuzex.com`. За доступом обращаться к руководителю WEB-отдела или системному администратору.
+
 <div id="app-swagger"/>
 
 ## Go-Swagger `APP`
@@ -562,99 +566,614 @@ $ go test -v -race ./parser -run='.'
 
 Репозиторий удобно разбит на множество пакетов для простоты работы:
 
-- generic — основной бот, который получает данные от всех скраперов
+- `generic` — **основной бот**, который получает данные от всех скраперов, создаёт инстанс загрузки в `Azure` и отправляет задание сервису [Scraper](#scraper) через сервис [IO](#io);
+- `id12XXX` — пакеты с ботами, каждый бот должен удовлетворять интерфейсу `Runner` из пакета `types`. Метод `Run()` в каждом пакете запускает определённый пул скраперов из пакета `scrapers`, затем полученные результаты уже собираются `generic`-ботом. Каждая провинция (`county`) должна иметь определённое форматирование для загрузки, функции которого описаны в репозитории [Utils](#utils);
 
-[//]: # (TODO: start ending up the doc from here)
+>***Совет***: *Для понимания того, за что отвечает определённый `id` в названии пакета, достаточно посмотреть таблицу `county` в базе данных `snl` на сервере.*
+
+- `botutils` — содержит небольшой набор вспомогательных функций;
+- `county` — содержит в себе `map[string]types.New`, с вызовом функции `New()` каждого пакета `id12XXX`, при объявлении нового пакета `id12XXX` — обязательно расширить мапу;
+- `scrapers` — содержит в себе структуры определённых скраперов с соответствующими методами, которые парсят сайт(ы) и возвращают некоторые базовые результаты (напр., список `FolioID`);
+- `upload` — содержит методы по созданию загрузки в `Azure` и  новой загрузки для вкладки `Property Data → Scraper → Uploads` на фронте;
+- `config` — объёмный конфигурационный файл с настройками по каждой провинции, указаниеим сайтов, некоторых параметров форматирования, парсинга и т.д. **Требует самостоятельного ознакомления**!
+- `main` — базовые методы по созданию слушателя, очереди, началу прослушивания очереди с задачами, созданию ботов и их запуску, простой и понятный пакет.
+
+>***Совет***: *в этом репозитории имеется `README`, в котором просто и понятно показывается процесс создания нового бота. Рекомендуется к ознакомлению.*
 
 ### Тесты `Indexer`
+
+В репозитории имеются базовые тесты под каждый пакет `id12XXX`, также имеется лишь 1 тест (*с двумя кейсами*) для пакета `scrapers`. При наличии времени желательно покрыть тестами пакет `scrapers`, чтобы понимать, изменилась ли структура сайта, который парсится, или где-то допущена ошибка разработчиком.
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/indexer
+$ go test -v ./scrapers -run='.'
+$ go test -v ./county... -run='.'
+```
+
+### **Индус в `Indexer`**
+
+В этом репозитории также делал некоторые правки разработчик из Индии, например, написал скрапер `deceasedsearch.go`, некоторые изменения и дополнения в `main`.
+
+Я избавился от нескольких ошибок и неточностей, допущенных им, но ошибки всё же могут присутствовать.
 
 <div id="io"/>
 
 ## `IO`
 
+Центральный сервис приёма и обработки входящих сообщений. Распределяет входящие сообщения очереди по остальным сервисам. Базово включает такие методы, как:
+
+- `upload`;
+- `export`;
+- `delete`;
+- `reindex`;
+- `run_bots`;
+- `restart`
+- и некоторые другие.
+
+### Детали работы `IO`
+
+> ***Замечание***: *я довольно мало проработал с этим репозиторием, поэтому детали могут быть недетальными.*
+
+По сути, основная цель сервиса — слушать `actions`, получать задание, если требуется, то обрабатывать его (*по этой причине присутствует множество различных файлов с вспомогательными функциями*) и передавать очередям других сервисов.
+
+**Основные действия** сервиса описаны в файле `actions.go`.
+
+### Тесты `IO`
+
+>Тесты отсутствуют.
+
 <div id="munroll"/>
 
 ## `Munroll`
+
+>***Внимание***: *сервис является неработающим!*
+
+Я не знаю функционал этого сервиса и его зону ответственности, код не изучал. Судя по основным методам — сервис работает примерно как [Importer](#importer) с какими-то изменениями.
+
+### Тесты `Munroll`
+
+Имеется минимальный набор тестов, **возможно**, они **устаревшие**.
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/munroll
+$ go test -v -race ./preset/... -run='.'
+$ if [ -f ./testdata/issues/extracted/check.csv ]; then go test -v ./ -run='.'; else echo "No test data"; fi
+# что должно быть в файле check.csv — не могу знать, этот файл указан в gitignore
+```
 
 <div id="normalizer"/>
 
 ## `Normalizer`
 
+Этот репозиторий должен отвечать за нормализацию поступивших данных (*owner and situs addresses, tax bills, folio appraisal, etc.*) и теоретически за то, чтобы эту информацию парсить с определённых сайтов.
+
+<div id="normalizer-detail"/>
+
+### Детали работы `Normalizer`
+
+`Normalizer` не является полноценным сервисом (также как и [Preimport](#preimport-detail), см. [TODO: Normalizer as a Service](#normalizer-aas)). На текущий момент бинарник этого репозитория можно и не запускать, его функции частично или полностью выполняются в микросервисах [Indexer](#indexer) (*парсинг данных*) и [Scraper](#scraper) (*нормализация данных*).
+
+Сервис необходимо переписать, хотя можно и полностью удалить его. Как минимум часть функций с [Scraper](#scraper) можно переложить на этот сервис.
+
+### Тесты `Normalizer`
+
+Имеются тесты аналогичные, как в [Scraper](#scraper-test)
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/normalizer
+$ go test -v ./normalizers/... -run='.'
+$ go test -v ./preimport/ -run='.'
+```
+
 <div id="preimport"/>
 
 ## `Preimport`
+
+Этот репозиторий должен отвечать за предварительный импорт правил из пакета `preimport` (файл `rules.go`) и запускать соответствущего воркера. Как я понял, сервис нацелен на ускорение работы сервисов [Scraper](#scraper) и [Normalizer](#normalizer).
+
+<div id="preimport-detail"/>
+
+### Детали работы `Preimport`
+
+`Preimport` не является полноценным сервисом. Его необходимо переписать (см. [TODO: Preimport as a Service](#preimport-aas)), чтобы был реализован механизм создания очереди при старте, корректная обработка данных и последующая отдача в соответствующий сервис.
+
+В дополнение, необходимо будет развернуть [Dokku](#dokku) приложение.
+
+>***Совет***: *свяжитесь с первым разработчиком или с клиентом для того, чтобы уточнить детали. Я не нашёл никакой информации об этом сервисе.*
+
+Я немного переписал изначальный репозиторий, чтобы был хотя бы бинарник. **Работу бинарника не тестировал**.
+
+### Тесты `Preimport`
+
+Имеются тесты основного пакета `preimport`, которые проверяют корректность работы методов работы с правилами.
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/preimport
+$ go test -v ./ -run='.'
+```
 
 <div id="scraper"/>
 
 ## `Scraper`
 
+Сервис парсит некоторые данные (*situs and owner addresses, tax bills, folio appraisal, etc.*) с заданных сайтов, затем нормализует полученные данные и загружает в `Azure` и на сайт.
+
+### Детали работы `Scraper`
+
+**Сервис использует внутри себя 2 потенциально отдельных микросервиса ([Preimport](#preimport) и [Normalizer](#normalizer))**. Их требуется реализовать при возможности.
+
+Сервис работает по простому алгоритму:
+
+- получить из очереди `actions` данные `FolioID`;
+- при необходимости форматировать их, используя функции форматирования из репозитория [Utils](#utils) (сидит в `vendor`);
+- нормализовать записи (*owner and situs addresses, tax bills, folio appraisal, etc.*);
+- выполнить `Preimport` при условии того, что пользователем был установлен соответствующий флаг;
+- осуществить загрузку данных в `Azure` и в `background tasks`.
+
+Процесс нормализации устроен примерно также как и запуск ботов в сервисе [Indexer](#indexer) — имеется `generic` нормализатор и деление по `county` с соответствующими форматами.
+
+>***Замечание***: *не смотря на то, что процесс нормализации распараллелен хорошо, он всё равно является довольно медленным.*
+
+**Временным, но рабочим, решением является увеличение ёмкости семафора `pool` до значений в 50-70, оптимальное значение не было найдено**.
+
+Задачи из очереди распределяются в файле `router.go`, экспорт происходит в `export.go`, загрузка файлов описана в `upload.go` — все функции и методы в них являются простыми и не требуют дополнительного описания. Код в `xls/xls.go` является просто длинной обработкой всех столбцов для формирования выходного `*.XLSX` файла.
+
+<div id="scraper-test"/>
+
+### Тесты `Scraper`
+
+В репозитории имеются тесты для внутреннего `preimport` пакета и пакетов по нормализации в директории `normalizers`.
+
+>***Замечание***: *тесты имеются не для всех пакетов, имеющиеся содержат в себя по 1-2 кейсов, по возможности необходимо увеличить процент покрытия тестами всего сервиса и придумать больше кейсов, в особенности фейловых.*
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/scraper
+$ go test -v ./normalizers/... -run='.'
+$ go test -v ./preimport/ -run='.'
+```
+
 <div id="utils"/>
 
 ## `Utils`
+
+Дополнительные функции для упрощения работы в микросервисах и работы с различными сторонними API.
+
+### Детали работы `Utils`
+
+>***Замечание***: *как водится, я практически не правил код в этом репозитории, а пакеты из него использовал редко, поэтому каких-то особых деталей не могу сказать.*
+
+Имеются следующие пакеты и краткое описание
+
+- `azure` — пакет для создания нового блоба и его заливки в облако `Azure`;
+- `countries` — мапа со списком всех стран и их кратким кодом;
+- `csv` — пакет по формированию и форматированию `*.CSV` файла для загрузки;
+- `dates` — пакет для преобразования формата даты к типу времени `Open API` (`DateTime`);
+- `format` — пакет по форматированию различных `counties`, содержит методы по форматированию `FolioID` и схемы их форматов;
+- `names` — пакет форматирования имён владельцев, полученных с различных сайтов;
+- `nlp` — пакет с «громким» названием, проверка схожести одного адреса с другим, используется в [Munroll](#munroll) и [Preimport](#preimport) (с сопуствующими сервисами в виде [Normalizer](#normalizer) и [Scraper](#scraper));
+- `progress` — пакет для отображения процесса выполнения задачи, отображаемого на фронте;
+- `queue` — пакет по упрощению работы с очередями [RabbitMQ], создаёт новых консьюмеров, паблишеров, сообщения и взаимодействие между ними;
+- `sorting` — реализация интерфейса `Sort` стандартной библиотеки для сортировки записей [Scraper](#scraper);
+- `states` — мапы по странам с их штатами/регионами, пополняемый;
+- `zipcodes` — списки почтовых кодов различных стран, пополняемый.
+
+<div id="utils-note"/>
+
+>***Замечание***: *в данном репозитории вместе со всеми остальными репозиториями используется конкретная ревизия пакета [Azure][go-azure], ревизию можно заменить тогда и только тогда, когда будет обновлён пакет `azure`.*
+
+### Тесты `Utils`
+
+Имеются несколько тестов для различных пакетов с минимальным покрытием.
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/utils
+$ go test -v ./nlp -run='.'
+# пакет `nlp`
+$ go test -v ./azure -run='.'
+# пакет `azure`, является нерабочим до тех пор, пока не будут пофикшены кейсы или не переписаны тесты вообще при обновлении ревизии
+$ go test -v ./format/ -run='.'
+# пакет `format`
+$ go test -v ./names/... -run='.'
+# запуск тестов вложенных пакетов с `county`
+$ go test -v ./ -run='.'
+# бесполезный тест пакета `utils`
+```
 
 <div id="deploy"/>
 
 ## Deploy
 
+Деплой осуществляется *автоматически* за счёт использования приложений [Dokku](#dokku) и [CI Wercker](#wercker).
+
 <div id="wercker"/>
 
 ## CI `Wercker`
+
+Проект работает на CI [Wercker][wercker-link], соответственно, имеются все настройки под запуск раннеров и последующего билда в каждом из репозиториев.
+
+Файлы настроек лежат в корне каждого репозитория: `wercker.yml`.
+
+Принцип работы как и у всех CI:
+
+1. При пуше запускается раннер с описанными в настройках шагами.
+2. Если пуш или мёрж был в одну из веток `master` или `develop`, запускается деплой в соответствии с настройками.
+
+Деплой происходит простым пушем в репозиторий приложения [Dokku][dokku-link]. Подробнее о билде, билдпаках и приложениях см. раздел [Dokku](#dokku).
+
+>***Совет***: *чтобы не зафейлить билд, рекомендую предварительно посмотреть на настройки CI в текущем репозитории, удостовериться, что на локалке всё билдится, все линтеры были прогнаны и тесты работают. Потом можно пушить в ветку.*
 
 <div id="serverside"/>
 
 ## Сервер (DigitalOcean)
 
+На сервере [DO][do-link] лежит проект с веткой `develop` и является `stage`-версией, однако в текущем виде ветка `develop` является основной для разработки, а `stage` является своего рода продакшеном.
+
+>***Замечание***: ***ветку `master` можно спокойно смёржить с текущей веткой `develop`**, она проверена на работоспособность, с неё можно с нуля собрать проект и нет никаких препятствий для мёржа. Я его не делал по причине того, что заказчик не просил.*
+
+Я обновлял сервер **15.01.2019**, так что все заголовки ядра и само ядро последней версии для `Ubuntu 16.04`. Также были обновлены некоторые плагины `Dokku` (за исключением `rabbitmq` и `postgresql` плагинов), сам `Dokku` обновлён до последней версии **0.8.\***, обновлён `Docker` до последней версии **18.09**.
+
+Были спулены последние образы `Docker` для `rabbitmq` и `postgresql`, но они не были задеплоены (см. [TODO: Оркестрация](#swarm)).
+
 <div id="dokku"/>
 
 ## `Dokku`
+
+`Dokku` отвечает за деплой микросервисов на сервер `DO`. Сам деплой `Wercker` производит с помощью следующей команды:
+
+```sh
+$ git remote add server $GIT_REMOTE
+# GIT_REMOTE — переменная окружения в настройках pipeline `Wercker`
+$ git push server HEAD:master
+# после пуша начинает работу buildpack
+```
+
+### Buildpack
+
+В общем случае `Dokku` можно назвать [Heroku] на минималках. `Dokku` работает на билдпаках под эмуляцией `Heroku` с помощью утилиты [Herokuish].
+
+Деплой почти всех приложений происходит с помощью одного [кастомного билдпака][buildpack-custom] для `Go`, который я держу в актуальном состоянии с апстримом.
+
+Приложение `app` деплоится с помощью [мульти-билдпака][multi-buildpack], который уже использует мой для `Go` и использует [nodejs-buildpack] для сборки `nodejs` окружения.
+
+Все репозитории настроены на использование:
+
+- `dep` как менеджера пакетов
+- версии `Go` **1.11.X** в билдпаке
+- отказ от `dep ensure` из-за настроек приватности репозиториев на `bitbucket`
+- в репозитории `APP` используется цель `heroku`, описанная в `Makefile`, **при её удалении приложение не будет задеплоено**
+
+### Приложения
+
+На текущий момент в `Dokku` задеплоены следующие приложения:
+
+- `app` — сервер;
+- `address`;
+- `fetcher`;
+- `importer`;
+- `indexer`;
+- `io`;
+- `munroll`;
+- `scraper`;
+- `normalizer` — в рамках [начала перехода](#normalizer-detail) на микросервис.
+
+```sh
+$ dokku apps:list
+# текущий список приложений
+$ dokku ps:report
+# текущее состояние всех приложений
+$ dokku --help
+# самая полезная команда
+$ dokku COMMAND:help
+# не менее полезная команда
+```
+
+Как было сказано, при переходе [Preimport](#preimport) на отдельный микросервис — **необходимо** будет **задеплоить новое приложение** для него. Создать своё приложение можно за несколько минут, более подробную информацию читать в [официальной документации][dokku-deploy-off] или [пошаговой инструкции][dokku-deploy-dummy].
+
+### **Конфиг и переопределения**
+
+Каждый репозиторий имеет свой собственный конфиг в пакете/файле `config(.go)`. Параметр конфига могут быть переопределены заданием параметров приложению `Dokku`.
+
+**Общее правило** такое для приложения:
+
+- все названия параметров `Dokku` заглавными буквами (uppercase);
+- если параметр конфига является вложенным, то параметр `Dokku` должен иметь «_» перед каждым уровнем вложенности.
+
+Пример:
+
+```yaml
+// config.go
+config_parameter: 1
+some:
+  inner:
+    parameter: true
+```
+
+Параметры приложения `Dokku` выглядят следующим образом:
+
+```sh
+$ dokku config app_name
+# CONFIG_PARAMETER=1
+# SOME_INNER_PARAMETER=true
+$ dokku config:set [--no-restart] app_name MY_KEY1=MY_VALUE1 [MY_KEY2=MY_VALUE2]
+```
+
+Пример реальный:
+
+```yaml
+// config.go
+debug: true //забыл выключить дебаг
+rabbitmq:
+  url: amqp://mmorgoev:password@localhost:5672/queue // забыл поменять локальный vhost
+```
+
+```sh
+$ dokku config:set app_name DEBUG="false" RABBITMQ_URL="amqp://queue:d46d7f5dc52d9d0f6041b3f32a5d2151@stage.cpaulgroup.com:9969/queue"
+# после рестарта приложения: дебаг выключен, rabbit работает
+```
 
 <div id="docker"/>
 
 ## `Docker`
 
+Помимо приложений с сервером и микросервисами, на сервере `DO` запущены несколько контейнеров `Docker`:
+
+- контейнер для `postgresql`;
+- контейнер для `elasticsearch`;
+- контейнер для `rabbitmq`;
+- контейнер для `pgbouncer`.
+
+>`pgbouncer` является [кастомным][pgbouncer-custom], детально я не успел разобрать изменения и отличия от [апстрима][pgbouncer-upstream].
+
+В дополнение к указанным контейнерам имеются два [амбассадора][docker-amba] к `postgresql` и `rabbitmq`. Эта технология является устаревшей, но в данный момент времени она работает. В свободное время можно [выполнить переход](#swarm) на корректный метод взаимодействия контейнеров.
+
+Все приложения `Dokku` общаются с указанными контейнерами, подключения контролирует `pgbouncer`.
+
 <div id="build-main"/>
 
 ## Сборка, запуск, разработка
+
+Для каждого репозитория я сделал `Makefile`, которые либо полностью запускают сборку, либо только проверяют наличие пакетов и запускают тесты.
+
+**Установка и сборка проекта на локалке теперь предельно простая**.
 
 <div id="prereq"/>
 
 ## Установка
 
+### Предварительная настройка
+
+Необходимые пакеты и их установка (пример на дистрибутиве `ArchLinux`):
+
+- `rabbitmq`: `pacman -S --noconfirm rabbitmq`;
+- `rabbitmqadmin`: `pacman -S --noconfirm rabbitmqadmin`;
+- `yarn`: `pacman -S --noconfirm yarn`;
+- `postgresql`: `pacman -S --noconfirm postgresql`;
+- (опционально) `docker`: `pacman -S --noconfirm docker`;
+- (опционально, я не ставил) `elasticsearch`: `pacman -S --noconfirm elasticsearch`.
+
+#### `RabbitMQ`
+
+```sh
+# добавляем плагин для менеджмента
+$ rabbitmq-plugins enable rabbitmq_management
+# настройка rabbitmq пользователя
+$ rabbitmqctl add_user user_name password
+$ rabbitmqctl set_user_tags user_name administrator
+# настройка vhost
+$ rabbitmqctl add_vhost vhost_name
+$ rabbitmqctl set_permissions -p vhost_name user_name ".*" ".*" ".*"
+# настройка exchange (необязательно, я делал)
+$ rabbitmqadmin declare exchange --vhost=vhost_name --user=user_name --password=password name=exchange_name type=direct durable=true
+# настройка очереди (необязательно, я делал)
+$ rabbitmqadmin declare queue --vhost=vhost_name --user=user_name --password=password name=queue_name durable=true
+# биндим (необязательно, я делал)
+$ rabbitmqadmin declare binding --vhost=vhost_name --user=user_name --password=password source=exhange_name destination=queue_name
+# стартуем сервис
+$ sudo systemctl start rabbitmq.service
+# проверяем что всё ок
+$ curl -i -u user_name:password http://localhost:15672/api/whoami
+# опциональный запуск при старте компьютера
+$ sudo systemctl enable rabbitmq.service
+```
+
+`RabbitMQ` можно настроить проще:
+
+- [скопировав код][rabbit-setup], сделать его исполняемым и выполнить;
+- выполнить:
+
+```sh
+$ docker pull rabbitmq
+$ docker run -d --hostname rabbit_hostname --name docker.rabbit -p 5672:5672 -e RABBITMQ_DEFAULT_USER=user -e RABBITMQ_DEFAULT_PASS=password -e RABBITMQ_DEFAULT_VHOST=vhost --net host rabbitmq:3.7.8-management
+$ docker ps
+# там будет контейнер, в нём rabbitmq запущенный и настроенный
+```
+
+#### `postgreSQL`
+
+```sh
+$ sudo systemctl start postgresql.service && sudo systemctl enable postgresql.service
+$ sudo su - postgres
+postgres $ initdb -D /var/lib/postgres/data
+postgres $ psql
+postgres=# \password
+postgres=# CREATE USER user_name WITH PASSWORD 'password' SUPERUSER CREATEDB CREATEROLE;
+postgres=# CREATE DATABASE snl OWNER user_name;
+```
+
+`postgreSQL` можно настроить проще:
+
+```sh
+$ docker pull postgres
+$ docker run --name docker.postgres -e POSTGRES_PASSWORD=password -e POSTGRES_DB=snl -d postgres
+$ docker ps
+# там будет контейнер, в нём postgres запущенный и настроенный
+```
+
 <div id="build-project"/>
 
 ## Сборка проекта
+
+Собирать проект ещё проще.
+
+1. Сначала необходимо спулить все репозитории проекта, про которые написано в этой документации.
+2. Выполнить для следующих репозиториев в указанной последовательности команду `make build`:
+
+- `API`
+- `Utils`
+- `Address`
+
+3. Для репозитория `APP` выполнить `make clean && make build`
+4. Для всех остальных репозиториев выполнить `make build`
+5. Для всех репозиториев, кроме `API` и `APP` выполнить сбилдить бинарники (`go build`)
+
+>***Совет***: *можно [воспользоваться скриптом][rebuild] для билда и затем постоянно его использовать.*
+
+>**Проект собран**.
+
+### Запуск сервисов и сервера
+
+**Запуск сервера**:
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/app
+$ make serve
+```
+
+**Запуск сервисов** производится обычным запуском бинарника, при желании можно указать порт через ключ `--port`.
 
 <div id="dep-work"/>
 
 ## Разработка в нескольких репозиториях
 
+Все репозитории максимально облегчены за счёт `prune`-опций в манифесте `dep`.
+>Исключение составляет репозиторий `APP`, где для пакета `bitbucket.org/dadebotsdb/api` указаны кастомные опции — необходимо, чтобы в `vendor` присутствовал файл `fixed.yaml`.
+
+Почти везде во всех репозиториях я зафиксировал не конкретную ревизию или версию, а именно ветку. Там, где я фиксировал ветку — все изменения были обновлены и я уверен, что в ближайшее время обновления не поломают функционал.
+
+> ***Совет***: *если что-то сломалось после `dep ensure -update`, то желательно откатиться, зафиксировать версию или даже ревизию какого-то пакета и затем продолжать работу.*
+
+Все репозитории используют опцию `constraint` по-дефолту для каждого из пакетов, из-за этого могут иногда возникать проблемы при работе с несколькими репозиториями одновременно.
+
+>***Пример***: идёт работа в репозиториях `API`, `APP` и `Indexer`, в каждом репозитории имеется ветка `feature/some_new`. Добавив новые модели в `API`, запушив изменения в текущую ветку, при попытке сделать `dep ensure` (*разумеется, заранее поменяв в манифесте ветку `develop` на `feature/some_new` у пакета `bitbucket.org/dadebotsdb/api`*) в любом из репозиториев — будет возникать ошибка. Это происходит из-за `constraint` на этот же проект в репозитории `Utils`, который указан с `constraint` в репозиториях `APP` и `Indexer`.
+
+```toml
+[[constraint]]
+  name = "bitbucket.org/dadebotsdb/api"
+  branch = "feature/some_new"
+  source = "git@bitbucket.org:dadebotsdb/api.git"
+```
+
+>***Решение***: после пуша изменений `API`, поменять `constraint` для пакета `bitbucket.org/dadebotsdb/api` на `override`. Сделать `dep ensure`. Если после этого в ветку `feature/some_new` `API` будут запушены ещё какие-то изменения, то необходимо уже выполнить `dep ensure -update` в репозиториях `APP` и `Indexer`.
+
+```toml
+[[override]]
+  name = "bitbucket.org/dadebotsdb/api"
+  branch = "feature/some_new"
+  source = "git@bitbucket.org:dadebotsdb/api.git"
+```
+
+**При возникновении любых вопросов по `dep`, можно обращаться [по этой ссылке][dep-dummy]**.
+
 <div id="todo"/>
 
 ## TODO
+
+Далее перечислены те пункты, которые я по каким-то причинам не успел сделать. Они не являются обязательными (кроме [разбана сервера](#crawlera)).
 
 <div id="swarm"/>
 
 ## Оркестрация
 
+Как было указано в секции [Docker](#docker), на сервере используется устаревшая архитектура связки контейнеров. Необходимо её обновить, воспользовавшись одним из предложенных вариантов.
+
+### Варианты решения
+
+Есть несколько вариантов:
+
+1. [User-defined networks]
+2. [Overlay networks]
+3. [Configs]
+4. [Stacks]
+
+С моей точки зрения, самыми простыми вариантами являются 3 и 4. В любом случае, все варианты требуют создания [Swarm]. При начале работы желательно ознакомиться хотя бы с [базовыми примерами][swarm-man] работы со `Swarm`.
+
+>Это задача для DevOps'а, особенно если выполнять работы непосредственно на сервере.
+
 <div id="crawlera"/>
 
 ## Разбан сервера
+
+Не смотря на то, что [Fetcher](#fetcher) работает через proxy-сервис [Crawlera], при частом запуске бота `RealTDM` был получен авто-бан, судя по всему, от `AWS`, на котором и хостится сайт. который парсится.
+
+У меня не было возможности детально изучить проблему, возможно, что на текущий момент сервер уже не забанен.
+
+### Варианты решения
+
+1. Получить бан на локальном компьютере (я это уже сделал).
+2. Пробросить end-point `Crawlera` на локалку, постучаться через proxy Crawlera на сайт.
+3. Если сайт недоступен, то обратиться в [support-service][crawlera-support] `Crawlera`.
+4. Если сайт доступен, то придумать решение проблемы.
+
+**В любом случае необходимо в конфиге `Indexer` изменить значение `tdm.concurrentFetchEntries` с 25 на 5 или 10 (не больше)**.
 
 <div id="preimport-aas"/>
 
 ## Preimport as a Service
 
+Как [уже было описано](#preimport-detail), есть потребность перевести `Preimport` на отдельный сервис, избавившись от дубликатов директории этого репозитория в сервисах `Scraper` и `Normalizer`.
+
+*Скорее всего эту задачу надо делать совместо со следующей задачей*.
+
+### Варианты решения
+
+1. Выяснить зачем конкретно нужен `Preimport`.
+2. Реализовать воркера, корректную работу пула с очередями, возможно, какую-то обработку.
+3. [Создать приложение][dokku-deploy-off] в `Dokku`.
+
 <div id="normalizer-aas"/>
 
 ## Normalizer as a Service
 
+Аналогично предыдущему пункту. Как [уже было описано](#normalizer-detail), есть потребность перевести `Normalizer` на отдельный сервис.
+
+>Либо можно полностью избавиться от этого репозитория, в этом случае нагрузка на `Scraper` будет сохраняться и замедлять его работу.
+
+### Варианты решения
+
+1. Реализовать корректную работу нормализации (можно взять из `Scraper`), создать свои очереди, наладить общение между микросервисами.
+
+Приложение в `Dokku` уже существует.
+
 <div id="paper-logger"/>
 
-## Включить PapperTrail
+## Включить PaperTrail
+
+Заказчик не успел оплатить аккаунт на [PaperTrail], поэтому после перехода на этот логгер, я выключил логирование в сервис.
+
+### Варианты решения
+
+1. Заменить в конфигах всех репозиториев `papertrail:.use: false` на `papertrail.use: true`.
 
 <div id="other-readme"/>
 
 ## Другие README
+
+Во многих репозиториях присутствуют файлы `README`, которые являются как устаревшими (например `README` в пакете `queue` репозитория `Utils`), так могут и **содержать полезную информацию** (например, `README` в `Indexer`).
+
+Здесь я просто сообщаю о том, что есть какая-то техническая документация, которую у меня не было времени обновить. Найти все `README` нетрудно:
+
+```sh
+$ pwd
+# $GOPATH/bitbucket.org/dadebotsdb/
+$ find -not \( -path "*vendor*" -prune \) -name "README.md" -print
+```
 
 [//]: # (Секция комментариев)
 
@@ -663,6 +1182,23 @@ $ go test -v -race ./parser -run='.'
    [swagger-off]: <https://swagger.io>
    [swagger-editor]: <https://editor.swagger.io>
    [eslint-cmd]: <https://eslint.org/docs/user-guide/command-line-interface>
+   [go-azure]: <https://github.com/Azure/azure-sdk-for-go>
+   [wercker-link]: <https://app.wercker.com>
+   [dokku-link]: <http://dokku.viewdocs.io/dokku/>
+   [dokku-deploy-off]: <http://dokku.viewdocs.io/dokku/deployment/application-deployment/>
+   [dokku-deploy-dummy]: <https://glebbahmutov.com/blog/running-multiple-applications-in-dokku/>
+   [buildpack-custom]: <https://github.com/zerospiel/heroku-buildpack-go>
+   [multi-buildpack]: <https://github.com/heroku/heroku-buildpack-multi.git>
+   [nodejs-buildpack]: <https://github.com/heroku/heroku-buildpack-nodejs.git>
+   [do-link]: <https://cloud.digitalocean.com>
+   [pgbouncer-custom]: <https://github.com/toscale/pgbouncer>
+   [pgbouncer-upstream]: <https://github.com/brainsam/pgbouncer>
+   [docker-amba]: <https://docs.docker.com/config/thirdparty/ambassador_pattern_linking/>
+   [rabbit-setup]: <https://gist.github.com/fforbeck/868462c0f7664d92e19e>
+   [rebuild]: <https://gist.github.com/zerospiel/8c877629dab9cd538560ae1c0775643f>
+   [dep-dummy]: <https://github.com/golang/dep/blob/master/docs/Gopkg.toml.md>
+   [crawlera-support]: <https://scrapinghub.com/contact>
+   [swarm-man]: <https://docs.docker.com/get-started/part4/>
    [RabbitMQ]: <https://www.rabbitmq.com>
    [SmartyStreets]: <https://smartystreets.com>
    [Google Maps]: <https://cloud.google.com/maps-platform/>
@@ -670,3 +1206,12 @@ $ go test -v -race ./parser -run='.'
    [SQLMigrate]: <https://github.com/rubenv/sql-migrate>
    [Go-Swagger]: <https://github.com/go-swagger/go-swagger/cmd/swagger>
    [Go-Bindata]: <https://github.com/jteeuwen/go-bindata/>
+   [Heroku]: <https://www.heroku.com>
+   [Herokuish]: <https://github.com/gliderlabs/herokuish>
+   [Crawlera]: <https://scrapinghub.com/crawlera>
+   [User-defined networks]: <https://docs.docker.com/engine/userguide/networking/#user-defined-networks>
+   [Overlay networks]: <https://docs.docker.com/engine/userguide/networking/overlay-security-model/>
+   [Configs]: <https://docs.docker.com/engine/swarm/configs/>
+   [Stacks]: <https://docs.docker.com/get-started/part5/>
+   [Swarm]: <https://docs.docker.com/engine/swarm/>
+   [PaperTrail]: <https://papertrailapp.com>
